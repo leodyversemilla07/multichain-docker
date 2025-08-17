@@ -49,7 +49,7 @@ if [ -n "$HOSTNAME" ] && [ "$HOSTNAME" != "-" ]; then
       -v "$DATA_VOLUME":/root/.multichain \
       -p $P2P_PORT:8000 -p $RPC_PORT:$RPC_PORT \
       my-multichain:2.3.3 \
-      multichaind $CHAIN_NAME@$CONNECT_PEER -rpcuser=$RPCUSER -rpcpassword=$RPCPASSWORD -rpcallowip=$RPCALLOWIP -rpcbind=0.0.0.0
+      multichaind $CHAIN_NAME@$CONNECT_PEER -rpcuser=$RPCUSER -rpcpassword=$RPCPASSWORD -rpcallowip=$RPCALLOWIP -rpcbind=0.0.0.0 -rpcport=$RPC_PORT
   else
     sudo docker run -d \
       --name "$CONTAINER_NAME" \
@@ -57,7 +57,7 @@ if [ -n "$HOSTNAME" ] && [ "$HOSTNAME" != "-" ]; then
       -v "$DATA_VOLUME":/root/.multichain \
       -p $P2P_PORT:8000 -p $RPC_PORT:$RPC_PORT \
       my-multichain:2.3.3 \
-      multichaind $CHAIN_NAME -rpcuser=$RPCUSER -rpcpassword=$RPCPASSWORD -rpcallowip=$RPCALLOWIP -rpcbind=0.0.0.0
+      multichaind $CHAIN_NAME -rpcuser=$RPCUSER -rpcpassword=$RPCPASSWORD -rpcallowip=$RPCALLOWIP -rpcbind=0.0.0.0 -rpcport=$RPC_PORT
   fi
 else
   if [ -n "$CONNECT_PEER" ]; then
