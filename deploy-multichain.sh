@@ -24,12 +24,6 @@ if docker ps -a --format '{{.Names}}' | grep -Eq "^$CONTAINER_NAME$"; then
   sudo docker rm -f "$CONTAINER_NAME"
 fi
 
-# Remove the data volume for a clean setup (WARNING: this deletes all blockchain data)
-if docker volume ls --format '{{.Name}}' | grep -Eq "^$DATA_VOLUME$"; then
-  echo "Removing existing '$DATA_VOLUME' volume for a clean setup..."
-  sudo docker volume rm "$DATA_VOLUME"
-fi
-
 # Always initialize the blockchain (safe to run even if already initialized)
 
 echo "Initializing blockchain $CHAIN_NAME..."
