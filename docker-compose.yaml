@@ -1,0 +1,117 @@
+# Updated compose file pins image tags to published versions on Docker Hub
+# and adds persistence + restart policies. Remove or adjust volumes as needed.
+services:
+    masternode:
+        image: leodyversemilla07/multichain-master:2.3.3
+        build: ./master
+        stdin_open: true
+        tty: true
+        restart: unless-stopped
+        healthcheck:
+            # Use $${VAR} so docker compose does not substitute at client side; evaluated inside container shell
+            test: ["CMD", "bash", "-c", "multichain-cli $${CHAIN_NAME:-dockerchain} getinfo >/dev/null 2>&1"]
+            interval: 30s
+            timeout: 5s
+            retries: 3
+        ports:
+            - "7447:7447"   # Stable P2P / connect port
+            - "8000:8000"   # Stable RPC port
+        environment:
+            CHAIN_NAME: procuchain
+            RPC_USER: multichainrpc
+            RPC_PASSWORD: changeme
+            RPC_ALLOWIP: 0.0.0.0/0
+            VIRTUAL_HOST: multichain-master.docker
+            VIRTUAL_PORT: 8000
+        # Example secret injection (uncomment after creating Docker secrets):
+        # secrets:
+        #   - rpc_password
+        volumes:
+            - master_data:/home/multichain/.multichain
+        deploy:
+            resources:
+                limits:
+                    cpus: '1.0'
+                    memory: 512M
+
+    explorer:
+        image: leodyversemilla07/multichain-explorer:2.3.3-mce-master
+        build: ./explorer
+        depends_on:
+            - masternode
+        stdin_open: true
+        tty: true
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD", "curl", "-fsS", "http://localhost:2750/"]
+            interval: 45s
+            timeout: 5s
+            retries: 5
+        ports:
+            - "2750:2750"   # Explorer web UI
+        environment:
+            CHAIN_NAME: procuchain
+            MASTER_PORT: 7447
+            RPC_USER: multichainrpc
+            RPC_PASSWORD: changeme
+            RPC_ALLOWIP: 0.0.0.0/0
+            VIRTUAL_HOST: multichain-explorer.docker
+            VIRTUAL_PORT: 2750
+        # Service name resolution (masternode) replaces legacy links
+
+    peer1:
+        image: leodyversemilla07/multichain-node:2.3.3
+        build: ./node
+        depends_on:
+            - masternode
+        stdin_open: true
+        tty: true
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD", "bash", "-c", "multichain-cli $${CHAIN_NAME:-dockerchain} getinfo >/dev/null 2>&1"]
+            interval: 45s
+            timeout: 5s
+            retries: 5
+        environment:
+            CHAIN_NAME: procuchain
+            MASTER_PORT: 7447
+        volumes:
+            - peer1_data:/home/multichain/.multichain
+        deploy:
+            resources:
+                limits:
+                    cpus: '0.5'
+                    memory: 384M
+
+    peer2:
+        image: leodyversemilla07/multichain-node:2.3.3
+        build: ./node
+        depends_on:
+            - masternode
+        stdin_open: true
+        tty: true
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD", "bash", "-c", "multichain-cli $${CHAIN_NAME:-dockerchain} getinfo >/dev/null 2>&1"]
+            interval: 45s
+            timeout: 5s
+            retries: 5
+        environment:
+            CHAIN_NAME: procuchain
+            MASTER_PORT: 7447
+        volumes:
+            - peer2_data:/home/multichain/.multichain
+        deploy:
+            resources:
+                limits:
+                    cpus: '0.5'
+                    memory: 384M
+
+volumes:
+    master_data:
+    peer1_data:
+    peer2_data:
+
+# secrets:
+#   rpc_password:
+#     file: ./secrets/rpc_password.txt
