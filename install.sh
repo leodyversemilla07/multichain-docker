@@ -8,6 +8,34 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$REPO_ROOT/.env"
+COMPOSE_FILE="$REPO_ROOT/docker-compose.yaml"
+
+is_port_free(){
+  local port=$1
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn "sport = :$port" | grep -q LISTEN && return 1 || return 0
+  elif command -v lsof >/dev/null 2>&1; then
+    lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1 && return 1 || return 0
+  else
+    # fallback: try to bind with nc if available
+    if command -v nc >/dev/null 2>&1; then
+      (echo >/dev/tcp/127.0.0.1/$port) >/dev/null 2>&1 && return 1 || return 0
+    fi
+    # unknown environment, assume free
+    return 0
+  fi
+}
+
+find_free_port(){
+  local start=${1:-8000}
+  local end=${2:-9000}
+  for ((p=start; p<=end; p++)); do
+    if is_port_free "$p"; then
+      echo "$p"; return 0
+    fi
+  done
+  return 1
+}
 
 usage(){
   cat <<EOF
@@ -133,6 +161,24 @@ EOF
 mv "$ENV_FILE.tmp" "$ENV_FILE"
 chmod 600 "$ENV_FILE" || true
 echo "[INFO] .env written"
+# Check ports and adjust if necessary
+CURRENT_RPC_PORT=$(awk -F= '/^RPC_PORT=/{print $2; exit}' "$ENV_FILE" || echo "$RPC_PORT")
+if ! is_port_free "$CURRENT_RPC_PORT"; then
+  NEW_PORT=$(find_free_port 8000 9000 || true)
+  if [[ -n "$NEW_PORT" ]]; then
+    echo "[WARN] RPC port $CURRENT_RPC_PORT is in use on the host; switching to free port $NEW_PORT and updating .env"
+    sed -i "s/^RPC_PORT=.*/RPC_PORT=$NEW_PORT/" "$ENV_FILE"
+    CURRENT_RPC_PORT=$NEW_PORT
+  else
+    echo "[ERROR] No free RPC port found in range 8000-9000. Aborting start." >&2
+    exit 4
+  fi
+fi
+
+# Warn if explorer port 2750 is occupied (UI might not be accessible from host)
+if ! is_port_free 2750; then
+  echo "[WARN] Explorer port 2750 is already in use on the host; UI bind may fail or be inaccessible." >&2
+fi
 
 if [[ $START_SERVICES -eq 1 ]]; then
   compose_cmd="$(find_compose || true)"
@@ -141,9 +187,11 @@ if [[ $START_SERVICES -eq 1 ]]; then
   fi
   echo "[INFO] Starting core services: masternode + explorer"
   if [[ "$compose_cmd" == "docker compose" ]]; then
-    docker compose up -d masternode explorer
+    echo "[DEBUG] docker compose -f $COMPOSE_FILE --env-file $ENV_FILE --project-directory $REPO_ROOT up -d masternode explorer"
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" --project-directory "$REPO_ROOT" up -d masternode explorer
   else
-    docker-compose up -d masternode explorer
+    echo "[DEBUG] docker-compose -f $COMPOSE_FILE --env-file $ENV_FILE --project-directory $REPO_ROOT up -d masternode explorer"
+    docker-compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" --project-directory "$REPO_ROOT" up -d masternode explorer
   fi
   echo "[INFO] Compose up requested. Use 'docker compose ps' and 'docker compose logs -f masternode' to follow startup."
 else
