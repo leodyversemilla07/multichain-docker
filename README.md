@@ -17,9 +17,16 @@ This stack provides:
 - Base image (Ubuntu 22.04) with MultiChain 2.3.3 binaries, optional SHA256 integrity enforcement, non-root runtime, and shared helpers (`mc-common.sh`).
 - Master (creator) node image: creates chain directory (if `AUTO_CREATE=1`), patches `params.dat` (ports & `anyone-can-connect`), generates secure RPC credentials (unless provided / secret injected), then delegates to the base entrypoint.
 - Peer node image: resilient auto-join logic against a hostname and a candidate port list; optional fixed listen/RPC ports per peer.
-- Legacy (Python 2) MultiChain Explorer container with defensive patches and optional fast-start.
+- Legacy MultiChain Explorer container (may require legacy Python dependencies) with defensive patches and optional fast-start.
 - Compose file: brings up 1 master + 2 peers + explorer with named volumes, restart policies, and resource limits examples.
 - Healthchecks (CLI & HTTP), secrets pattern (`*_FILE`), smoke test automation.
+
+## Recent changes
+
+- Explorer connection issue resolved: explorer now uses the injected RPC secret and the correct RPC host so the UI shows "Connected" instead of "No Connection".
+- Secrets-first approach: RPC passwords are no longer stored in the repository `.env`; use Docker secrets or file-backed `*_FILE` env vars (example: `RPC_PASSWORD_FILE=/run/secrets/rpc_password`).
+- Healthcheck robustness: added a trimmed, file-aware RPC healthcheck script and tightened healthcheck logic to avoid CRLF-related failures.
+- Repository hygiene: `secrets/` files are intended to be created locally and are ignored from git; do not commit plaintext credentials.
 
 | Image | Role | Purpose | Tags (example) |
 |-------|------|---------|----------------|
@@ -37,7 +44,7 @@ Pin to an immutable version or commit tag in production rather than `latest`.
 | Base | `multichain-base` | Install binaries, enforce (optional) tarball integrity, create non-root user, generic entrypoint | `MULTICHAIN_VERSION`, `MULTICHAIN_SHA256`, `REQUIRE_HASH`, `CHAIN_NAME`, `AUTO_CREATE`, `START_FLAGS` |
 | Master | `multichain-master` | Chain genesis / first node, generate RPC config, patch `params.dat` | `CHAIN_NAME`, `RPC_USER`, `RPC_PASSWORD(_FILE)`, `RPC_ALLOWIP(_FILE)`, `RPC_PORT(_FILE)`, `ANYONE_CAN_CONNECT`, `P2P_PORT` |
 | Peer | `multichain-node` | Discover and join master via hostname + port scan, optional custom listen/RPC ports | `CHAIN_NAME`, `MASTER_HOST`, `MASTER_PORT`, `MASTER_PORT_CANDIDATES`, `RETRIES`, `SLEEP_SECONDS`, `NODE_P2P_PORT`, `NODE_RPC_PORT`, `START_FLAGS` |
-| Explorer | `multichain-explorer` | Light local daemon + web UI, on-the-fly explorer.conf, Python 2 legacy indexer | `CHAIN_NAME`, `MASTER_HOST`, `MASTER_PORT`, `RPC_*`, `EXPLORER_PORT`, `EXPLORER_BIND`, `GENERATE_EXPLORER_CONF`, `FAST_START`, `COMMIT_BYTES`, `EXPLORE_FLAGS`, `RETRIES` |
+| Explorer | `multichain-explorer` | Light local daemon + web UI, on-the-fly explorer.conf, legacy indexer | `CHAIN_NAME`, `MASTER_HOST`, `MASTER_PORT`, `RPC_*`, `EXPLORER_PORT`, `EXPLORER_BIND`, `GENERATE_EXPLORER_CONF`, `FAST_START`, `COMMIT_BYTES`, `EXPLORE_FLAGS`, `RETRIES` |
 
 ### Runtime Flow
 1. Master starts, creates chain dir (if absent), patches `params.dat` (enforcing `default-network-port`, `default-rpc-port`, and optionally `anyone-can-connect=true`).
@@ -147,6 +154,8 @@ MULTICHAIN_RPC_USER=multichainrpc
 # Prefer using file-based secrets: MULTICHAIN_RPC_PASSWORD_FILE=/run/secrets/rpc_password
 ```
 
+Note: this repository has removed `MULTICHAIN_RPC_PASSWORD` from the tracked `.env` to avoid accidental commits; please use the `*_FILE` pattern or Docker secrets instead.
+
 Adjust host/ports to match your deployment environment.
 
 ## Manual Image Build Examples
@@ -169,7 +178,7 @@ Build master (use directory as context so COPY works):
 docker build --build-arg MULTICHAIN_BASE_VERSION=2.3.3 -t leodyversemilla07/multichain-master:2.3.3 master
 ```
 
-Build explorer (legacy Python 2 dependencies) – pin the tag to include version + ref:
+Build explorer (may require legacy Python dependencies) – pin the tag to include version + ref:
 
 ```bash
 docker build --build-arg MULTICHAIN_EXPLORER_REF=master \
@@ -202,7 +211,7 @@ docker run -d --name peer1 \
 
 ## Explorer Notes
 
-The explorer image uses the legacy MultiChain Explorer (Python 2). Runtime behavior:
+The explorer image uses the legacy MultiChain Explorer (may require legacy Python dependencies). Runtime behavior:
 
 * Waits for master reachability (hostname `MASTER_HOST`, port `MASTER_PORT`).
 * Seeds a minimal `multichain.conf` (inserting `rpcport` and optional credentials) before starting.
@@ -227,7 +236,7 @@ For production security & longevity:
 - Inject sensitive RPC credentials via Docker secrets or *_FILE env vars (see below).
 - Consider a reverse proxy with TLS termination (Caddy / Nginx) for RPC if exposed.
 - Provide tarball hash (`MULTICHAIN_SHA256`) at build time for supply-chain assurance.
-- Restrict explorer port (2750) access; treat Python 2 code as untrusted surface.
+- Restrict explorer port (2750) access; treat legacy explorer code as untrusted surface.
 
 ## Updating Images
 
@@ -287,6 +296,8 @@ Example (Docker secret):
 
 At startup the entrypoint logs which variables were loaded from secret files.
 
+Note: the repository includes `scripts/healthcheck_rpc.sh` and the explorer startup script reads the RPC password from the mounted secret path (commonly `/run/secrets/rpc_password`). Place your local secret under `secrets/rpc_password.txt` for local testing; this path is ignored by git by design.
+
 ## Healthchecks
 
 All services define Docker healthchecks:
@@ -305,7 +316,7 @@ bash scripts/smoke-test.sh
 
 ## Explorer Deprecation & Modernization Plan
 
-The bundled explorer relies on Python 2 (EOL). Recommended migration steps:
+The bundled explorer relies on legacy dependencies which may require Python 2 (EOL) in some versions. Recommended migration steps:
 1. Replace with a maintained fork or custom indexer in Python 3 / Go.
 2. Expose a minimal REST gateway for chain queries used by UI.
 3. Containerize a modern frontend (React/Vue) consuming the gateway.
@@ -350,7 +361,7 @@ For official protocol details see [MultiChain documentation](https://www.multich
 - `base/` base image (MultiChain binaries + shared scripts `mc-common.sh`, `entrypoint.sh`)
 - `master/` master (creator) node (sources shared helpers)
 - `node/` peer node image & resilient join script (sources shared helpers)
-- `explorer/` legacy explorer (Python 2)
+- `explorer/` legacy explorer (legacy dependencies)
 - `deploy-multichain.sh` optional single-node helper
 - `.env.example` environment sample
 - `.dockerignore` build context pruning

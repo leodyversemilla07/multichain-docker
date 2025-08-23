@@ -4,7 +4,7 @@ ARG VCS_REF=""
 
 FROM leodyversemilla07/multichain-base:${MULTICHAIN_BASE_VERSION}
 
-# Re-declare build args for use in subsequent instructions (Docker resets scope after FROM)
+# Re-declare build args scope after FROM
 ARG MULTICHAIN_BASE_VERSION
 ARG BUILD_DATE
 ARG VCS_REF
@@ -32,8 +32,7 @@ ENV CHAIN_NAME=dockerchain \
 	RETRIES=30 \
 	SLEEP_SECONDS=2
 
-# Copy connection script (build context root -> node/connect-node.sh)
-# Need root to modify /usr/local/bin permissions, then drop back to multichain.
+# Copy connection script (need root to set permissions, then run as unprivileged user)
 USER root
 COPY connect-node.sh /usr/local/bin/connect-node.sh
 RUN chmod 0755 /usr/local/bin/connect-node.sh \
@@ -42,7 +41,8 @@ USER multichain
 
 EXPOSE 7447 8000
 
-# Align with base/master healthcheck style & timing (no-op if CHAIN_NAME empty)
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD test -z "$CHAIN_NAME" || multichain-cli "$CHAIN_NAME" getinfo > /dev/null 2>&1 || exit 1
+# Use exec-form healthcheck for consistency; no-op if CHAIN_NAME empty
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+	CMD ["sh", "-c", "test -z \"$CHAIN_NAME\" || multichain-cli \"$CHAIN_NAME\" getinfo >/dev/null 2>&1 || exit 1"]
 
 ENTRYPOINT ["/usr/local/bin/connect-node.sh"]

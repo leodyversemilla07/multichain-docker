@@ -25,7 +25,7 @@ fi
 mc_log "[MASTER] Preparing master node for chain '${CHAIN_NAME}'"
 mc_ensure_chain_dir "$CHAIN_NAME" "$DATA_ROOT"
 
-# Patch params.dat for stable ports / connectivity
+# Patch params.dat for stable ports / connectivity if present
 if [[ -f "$PARAMS_FILE" ]]; then
   patch_line(){ local key="$1" val="$2"; if grep -q "^${key}" "$PARAMS_FILE"; then sed -i "s/^${key}.*/${key} = ${val}/" "$PARAMS_FILE" || true; fi; }
   patch_line default-network-port "$P2P_PORT"
@@ -40,7 +40,8 @@ fi
 read -r -a RPC_ALLOWIP_LIST < <(echo "$RPC_ALLOWIP" | tr ',;' ' ')
 tmp_list=()
 for ip in "${RPC_ALLOWIP_LIST[@]}"; do
-  [[ -n "${ip// }" ]] && tmp_list+=("$ip")
+  ip_trimmed=$(echo "$ip" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+  [[ -n "$ip_trimmed" ]] && tmp_list+=("$ip_trimmed")
 done
 RPC_ALLOWIP_LIST=("${tmp_list[@]}")
 
@@ -52,6 +53,7 @@ if [[ ! -f "$CONF_FILE" ]]; then
     mc_log "[MASTER] Generated RPC password"
   fi
   mc_log "[MASTER] Writing new multichain.conf (rpcallowip entries: ${RPC_ALLOWIP_LIST[*]})"
+  tmp_conf=$(mktemp)
   {
     echo "rpcuser=${RPC_USER}"
     echo "rpcpassword=${RPC_PASSWORD}"
@@ -59,7 +61,7 @@ if [[ ! -f "$CONF_FILE" ]]; then
     for ip in "${RPC_ALLOWIP_LIST[@]}"; do
       [[ -n "$ip" ]] && echo "rpcallowip=${ip}"
     done
-  } >"$CONF_FILE"
+  } >"$tmp_conf" && mv "$tmp_conf" "$CONF_FILE"
 else
   # Patch existing file if values diverge
   changed=0
@@ -88,11 +90,13 @@ else
     for ip in "${RPC_ALLOWIP_LIST[@]}"; do [[ -z ${have_set[$ip]:-} ]] && { rebuild=1; break; }; done
   fi
   if (( rebuild )); then
-    sed -i '/^rpcallowip=/d' "$CONF_FILE"
+    # Rebuild rpcallowip entries atomically
+    tmp_conf=$(mktemp)
+    sed '/^rpcallowip=/d' "$CONF_FILE" >"$tmp_conf" || true
     for ip in "${RPC_ALLOWIP_LIST[@]}"; do
-      [[ -n "$ip" ]] && echo "rpcallowip=${ip}" >>"$CONF_FILE"
+      [[ -n "$ip" ]] && echo "rpcallowip=${ip}" >>"$tmp_conf"
     done
-    mc_log "[MASTER] Rewrote rpcallowip lines: ${RPC_ALLOWIP_LIST[*]}"
+    mv "$tmp_conf" "$CONF_FILE" && mc_log "[MASTER] Rewrote rpcallowip lines: ${RPC_ALLOWIP_LIST[*]}"
     changed=1
   fi
   if (( changed )); then

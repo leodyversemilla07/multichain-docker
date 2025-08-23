@@ -1,12 +1,11 @@
 ARG MULTICHAIN_BASE_VERSION=2.3.3
 ARG BUILD_DATE
 ARG VCS_REF=""
-# Optional: provide a digest for stronger pinning (uncomment and set) 
-# ARG MULTICHAIN_BASE_DIGEST="sha256:..." 
-# FROM leodyversemilla07/multichain-base:${MULTICHAIN_BASE_VERSION}@${MULTICHAIN_BASE_DIGEST}
+# Optional: provide a digest for stronger pinning (uncomment and set)
+# ARG MULTICHAIN_BASE_DIGEST="sha256:..."
 FROM leodyversemilla07/multichain-base:${MULTICHAIN_BASE_VERSION}
 
-# Re-declare build args for use in subsequent instructions (Docker resets scope after FROM)
+# Re-declare build args scope after FROM
 ARG MULTICHAIN_BASE_VERSION
 ARG BUILD_DATE
 ARG VCS_REF
@@ -52,7 +51,8 @@ ENV BASE_ENTRYPOINT_SHA256_FILE=/usr/local/bin/entrypoint.base.sh.sha256
 
 EXPOSE 7447 8000
 
-# Align healthcheck style with base (no-op if CHAIN_NAME empty, though master sets a default)
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD test -z "$CHAIN_NAME" || multichain-cli "$CHAIN_NAME" getinfo > /dev/null 2>&1 || exit 1
+# Use exec-form healthcheck for consistent behavior; no-op when CHAIN_NAME is empty
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+	CMD ["sh", "-c", "test -z \"$CHAIN_NAME\" || multichain-cli \"$CHAIN_NAME\" getinfo >/dev/null 2>&1 || exit 1"]
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

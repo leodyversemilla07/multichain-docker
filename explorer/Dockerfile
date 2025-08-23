@@ -18,23 +18,19 @@ LABEL maintainer="leodyversemilla07" \
 # Upstream node image sets USER to multichain; elevate to root for package installation.
 USER root
 
-# Use Python 3 and install the v2 explorer (multichain-explorer-2) via pip3.
-# Install dependencies & explorer in one layer to reduce image size.
+# Install runtime dependencies and fetch explorer source to /opt
 RUN set -eux; \
-    mkdir -p /var/lib/apt/lists/partial; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        python3 python3-dev python3-pip sqlite3 libsqlite3-dev curl ca-certificates wget build-essential jq; \
-    # Download the multichain-explorer-2 archive and install with pip3 so dependencies are resolved automatically
+    python3 python3-pip sqlite3 libsqlite3-dev curl ca-certificates wget jq build-essential; \
+    # Download the explorer source and place under /opt
     cd /root; \
     wget -q "https://github.com/MultiChain/multichain-explorer-2/archive/${MULTICHAIN_EXPLORER_REF}.tar.gz" -O explorer.tar.gz; \
     tar -xzf explorer.tar.gz; \
     rm -f explorer.tar.gz; \
     mv /root/multichain-explorer-2-* /opt/multichain-explorer-2; \
     chown -R multichain:multichain /opt/multichain-explorer-2; \
-    # Note: the upstream multichain-explorer-2 source bundle does not include
-    # packaging metadata (setup.py / pyproject.toml) so it isn't pip-installable.
-    # We keep the source under /opt and load it with PYTHONPATH at runtime.
+    # Clean up developer packages and caches
     apt-get purge -y build-essential; \
     apt-get autoremove -y; \
     apt-get clean; \
@@ -66,7 +62,9 @@ ENV GENERATE_EXPLORER_CONF=1 \
 
 EXPOSE 2750
 
-HEALTHCHECK --interval=45s --timeout=5s --retries=5 CMD curl -fsS http://localhost:2750/ >/dev/null || exit 1
+# Use exec-form healthcheck for consistent behavior
+HEALTHCHECK --interval=45s --timeout=5s --retries=5 \
+    CMD ["sh", "-c", "curl -fsS http://localhost:2750/ >/dev/null || exit 1"]
 
 # Drop back to unprivileged user for runtime
 USER multichain

@@ -1,5 +1,4 @@
-# Updated compose file pins image tags to published versions on Docker Hub
-# and adds persistence + restart policies. Remove or adjust volumes as needed.
+# Docker Compose for multichain services (master, explorer, peers)
 services:
     masternode:
         image: leodyversemilla07/multichain-master:2.3.3
@@ -8,29 +7,27 @@ services:
         tty: true
         restart: unless-stopped
         healthcheck:
-            # Use the bundled scripts/healthcheck_rpc.sh for robustness (avoids complex inline quoting)
-            test: ["CMD", "/home/multichain/scripts/healthcheck_rpc.sh"]
+            # Use an external script to avoid YAML quoting issues.
+            test: ["CMD", "sh", "-c", "sh /scripts/healthcheck_rpc.sh"]
             interval: 10s
             timeout: 5s
-            retries: 5
+            retries: 6
             start_period: 20s
         ports:
-            - "7447:7447"   # Stable P2P / connect port
-            - "8000:8000"   # RPC port (host access)
+            - "7447:7447"  # P2P / connect port
+            - "8000:8000"  # RPC port (host access)
         environment:
             CHAIN_NAME: ${CHAIN_NAME}
             RPC_USER: ${RPC_USER}
             RPC_PASSWORD: ${RPC_PASSWORD}
-            RPC_PASSWORD_FILE: /run/secrets/rpc_password
             RPC_ALLOWIP: ${RPC_ALLOWIP}
             VIRTUAL_HOST: multichain-master.docker
             VIRTUAL_PORT: 8000
         volumes:
-            - master_data:/home/multichain/.multichain    # Persist chain data
-            - ./scripts:/home/multichain/scripts:ro       # Helper scripts (read-only)
-            - ./scripts:/scripts:ro                      # Convenience mount at /scripts
-        secrets:
-            - rpc_password
+            - master_data:/home/multichain/.multichain
+            - ./scripts:/home/multichain/scripts:ro
+            - ./scripts:/scripts:ro
+
     explorer:
         image: leodyversemilla07/multichain-explorer:2.3.3
         build: ./explorer
@@ -41,12 +38,14 @@ services:
         tty: true
         restart: unless-stopped
         healthcheck:
-            test: ["CMD", "curl", "-fsS", "http://localhost:2750/"]
+            # check explorer UI (exec form using curl)
+            test: ["CMD", "curl", "-fsS", "http://localhost:2750/", "||", "exit", "1"]
             interval: 45s
             timeout: 5s
             retries: 5
+            start_period: 10s
         ports:
-            - "2750:2750"   # Explorer web UI
+            - "2750:2750"  # Explorer web UI
         environment:
             CHAIN_NAME: ${CHAIN_NAME}
             MASTER_PORT: ${MASTER_PORT}
@@ -54,28 +53,23 @@ services:
             RPC_PORT: ${RPC_PORT}
             RPC_USER: ${RPC_USER}
             RPC_PASSWORD: ${RPC_PASSWORD}
-            RPC_PASSWORD_FILE: /run/secrets/rpc_password
-            PUBLIC_RPCHOST: ${PUBLIC_RPCHOST}
             RPC_ALLOWIP: ${RPC_ALLOWIP}
             VIRTUAL_HOST: multichain-explorer.docker
             VIRTUAL_PORT: 2750
         volumes:
             - master_data:/home/multichain/.multichain
-        secrets:
-            - rpc_password
         deploy:
             resources:
                 limits:
                     cpus: '1.0'
                     memory: 512M
 
-        # Service name resolution (masternode) replaces legacy links
-
     peer1:
         image: leodyversemilla07/multichain-node:2.3.3
         build: ./node
         depends_on:
-            - masternode
+            masternode:
+                condition: service_healthy
         stdin_open: true
         tty: true
         restart: unless-stopped
@@ -84,6 +78,7 @@ services:
             interval: 45s
             timeout: 5s
             retries: 5
+            start_period: 20s
         environment:
             CHAIN_NAME: ${CHAIN_NAME}
             MASTER_PORT: ${MASTER_PORT}
@@ -101,7 +96,8 @@ services:
         image: leodyversemilla07/multichain-node:2.3.3
         build: ./node
         depends_on:
-            - masternode
+            masternode:
+                condition: service_healthy
         stdin_open: true
         tty: true
         restart: unless-stopped
@@ -110,6 +106,7 @@ services:
             interval: 45s
             timeout: 5s
             retries: 5
+            start_period: 20s
         environment:
             CHAIN_NAME: ${CHAIN_NAME}
             MASTER_PORT: ${MASTER_PORT}
@@ -127,7 +124,3 @@ volumes:
     master_data:
     peer1_data:
     peer2_data:
-
-secrets:
-    rpc_password:
-        file: ./secrets/rpc_password.txt
