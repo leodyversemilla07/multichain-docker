@@ -36,7 +36,9 @@ read_env(){
   if [[ -f "$ENV_FILE" ]]; then
     while IFS='=' read -r key value; do
       key="${key// /}"
-      value="${value%"}"; value="${value#"}"
+      # strip surrounding double-quotes if present
+      value="${value%\"}"
+      value="${value#\"}"
       [[ -z "$key" || "$key" =~ ^# ]] && continue
       EXISTING_ENV["$key"]="$value"
     done < <(grep -E '^[[:alnum:]_]+=|^#' "$ENV_FILE" || true)
