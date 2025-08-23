@@ -40,6 +40,11 @@ RUN cp /usr/local/bin/entrypoint.sh /usr/local/bin/entrypoint.base.sh \
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/entrypoint.base.sh \
 	&& chown multichain:multichain /usr/local/bin/entrypoint.base.sh /usr/local/bin/entrypoint.base.sh.sha256 /usr/local/bin/entrypoint.sh
+
+# Install lightweight tooling needed for runtime healthchecks (curl/jq). Keep image small and clean caches.
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends curl jq \
+	&& rm -rf /var/lib/apt/lists/*
 USER multichain
 
 # Provide hash as env for optional runtime verification

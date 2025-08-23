@@ -1,0 +1,22 @@
+name: Explorer CI
+
+on:
+  push:
+    paths:
+      - 'explorer/**'
+  pull_request:
+    paths:
+      - 'explorer/**'
+
+jobs:
+  lint-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run shellcheck on run-services.sh
+        uses: ludeeus/action-shellcheck@v2
+        with:
+          files: explorer/run-services.sh
+      - name: Build explorer image
+        run: |
+          docker build --no-cache -t multichain-explorer:ci ./explorer

@@ -1,1 +1,5 @@
 docker-build.yml
+.env
+secrets/
+*.log
+node_modules/

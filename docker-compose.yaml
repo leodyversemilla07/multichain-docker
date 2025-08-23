@@ -8,34 +8,28 @@ services:
         tty: true
         restart: unless-stopped
         healthcheck:
-            # Use $${VAR} so docker compose does not substitute at client side; evaluated inside container shell
-            test: ["CMD", "bash", "-c", "multichain-cli $${CHAIN_NAME:-dockerchain} getinfo >/dev/null 2>&1"]
+            # Use HTTP JSON-RPC for the healthcheck (curl + basic auth). This avoids multichain-cli segfaults
+            # observed in the container and verifies the RPC endpoint is responsive.
+            test: ["CMD", "bash", "-c", "cd /home/multichain && curl -sS -u \"${RPC_USER}:${RPC_PASSWORD}\" -X POST -H 'content-type: text/plain;' --data-binary '{\"jsonrpc\": \"1.0\", \"id\": \"hc\", \"method\": \"getinfo\", \"params\": [] }' http://127.0.0.1:${RPC_PORT:-8000}/ | grep -q '\"result\"' || exit 1"]
             interval: 30s
             timeout: 5s
             retries: 3
         ports:
             - "7447:7447"   # Stable P2P / connect port
-            - "8000:8000"   # Stable RPC port
+            - "8000:8000"   # RPC port (host access)
         environment:
-            CHAIN_NAME: procuchain
-            RPC_USER: multichainrpc
-            RPC_PASSWORD: changeme
-            RPC_ALLOWIP: 0.0.0.0/0
+            CHAIN_NAME: ${CHAIN_NAME}
+            RPC_USER: ${RPC_USER}
+            RPC_PASSWORD: ${RPC_PASSWORD}
+            RPC_ALLOWIP: ${RPC_ALLOWIP}
             VIRTUAL_HOST: multichain-master.docker
             VIRTUAL_PORT: 8000
-        # Example secret injection (uncomment after creating Docker secrets):
-        # secrets:
-        #   - rpc_password
         volumes:
-            - master_data:/home/multichain/.multichain
-        deploy:
-            resources:
-                limits:
-                    cpus: '1.0'
-                    memory: 512M
-
+            - master_data:/home/multichain/.multichain    # Persist chain data
+            - ./scripts:/home/multichain/scripts:ro       # Helper scripts (read-only)
+            - ./scripts:/scripts:ro                      # Convenience mount at /scripts
     explorer:
-        image: leodyversemilla07/multichain-explorer:2.3.3-mce-master
+        image: leodyversemilla07/multichain-explorer:2.3.3
         build: ./explorer
         depends_on:
             - masternode
@@ -50,13 +44,23 @@ services:
         ports:
             - "2750:2750"   # Explorer web UI
         environment:
-            CHAIN_NAME: procuchain
-            MASTER_PORT: 7447
-            RPC_USER: multichainrpc
-            RPC_PASSWORD: changeme
-            RPC_ALLOWIP: 0.0.0.0/0
+            CHAIN_NAME: ${CHAIN_NAME}
+            MASTER_PORT: ${MASTER_PORT}
+            RPC_HOST: ${RPC_HOST}
+            RPC_PORT: ${RPC_PORT}
+            RPC_USER: ${RPC_USER}
+            RPC_PASSWORD: ${RPC_PASSWORD}
+            RPC_ALLOWIP: ${RPC_ALLOWIP}
             VIRTUAL_HOST: multichain-explorer.docker
             VIRTUAL_PORT: 2750
+        volumes:
+            - master_data:/home/multichain/.multichain
+        deploy:
+            resources:
+                limits:
+                    cpus: '1.0'
+                    memory: 512M
+
         # Service name resolution (masternode) replaces legacy links
 
     peer1:
@@ -68,15 +72,17 @@ services:
         tty: true
         restart: unless-stopped
         healthcheck:
-            test: ["CMD", "bash", "-c", "multichain-cli $${CHAIN_NAME:-dockerchain} getinfo >/dev/null 2>&1"]
+            test: ["CMD", "bash", "-c", "cd /home/multichain && HOME=/home/multichain multichain-cli $${CHAIN_NAME:-dockerchain} getinfo >/dev/null 2>&1"]
             interval: 45s
             timeout: 5s
             retries: 5
         environment:
-            CHAIN_NAME: procuchain
-            MASTER_PORT: 7447
+            CHAIN_NAME: ${CHAIN_NAME}
+            MASTER_PORT: ${MASTER_PORT}
         volumes:
             - peer1_data:/home/multichain/.multichain
+            - ./scripts:/scripts:ro
+            - ./scripts:/home/multichain/scripts:ro
         deploy:
             resources:
                 limits:
@@ -92,15 +98,17 @@ services:
         tty: true
         restart: unless-stopped
         healthcheck:
-            test: ["CMD", "bash", "-c", "multichain-cli $${CHAIN_NAME:-dockerchain} getinfo >/dev/null 2>&1"]
+            test: ["CMD", "bash", "-c", "cd /home/multichain && HOME=/home/multichain multichain-cli $${CHAIN_NAME:-dockerchain} getinfo >/dev/null 2>&1"]
             interval: 45s
             timeout: 5s
             retries: 5
         environment:
-            CHAIN_NAME: procuchain
-            MASTER_PORT: 7447
+            CHAIN_NAME: ${CHAIN_NAME}
+            MASTER_PORT: ${MASTER_PORT}
         volumes:
             - peer2_data:/home/multichain/.multichain
+            - ./scripts:/scripts:ro
+            - ./scripts:/home/multichain/scripts:ro
         deploy:
             resources:
                 limits:

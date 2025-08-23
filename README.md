@@ -143,7 +143,8 @@ MULTICHAIN_CHAIN_NAME=procuchain
 MULTICHAIN_P2P_PORT=7447
 MULTICHAIN_RPC_PORT=8000
 MULTICHAIN_RPC_USER=multichainrpc
-MULTICHAIN_RPC_PASSWORD=changeme
+# MULTICHAIN_RPC_PASSWORD=REPLACE_WITH_STRONG_PASSWORD  # do NOT commit real passwords
+# Prefer using file-based secrets: MULTICHAIN_RPC_PASSWORD_FILE=/run/secrets/rpc_password
 ```
 
 Adjust host/ports to match your deployment environment.

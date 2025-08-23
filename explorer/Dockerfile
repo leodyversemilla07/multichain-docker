@@ -7,48 +7,50 @@ ARG MULTICHAIN_EXPLORER_REF=master
 
 # OCI / metadata labels
 LABEL maintainer="leodyversemilla07" \
-    org.opencontainers.image.title="multichain-explorer" \
-    org.opencontainers.image.description="MultiChain Explorer (legacy Python implementation)" \
+    org.opencontainers.image.title="multichain-explorer-2" \
+    org.opencontainers.image.description="MultiChain Explorer (v2, Python 3 implementation)" \
     org.opencontainers.image.source="https://github.com/leodyversemilla07/multichain-docker" \
     org.opencontainers.image.created="${BUILD_DATE}" \
     org.opencontainers.image.version="${MULTICHAIN_EXPLORER_REF}" \
     org.opencontainers.image.licenses="MIT" \
-    org.opencontainers.image.documentation="https://github.com/MultiChain/multichain-explorer"
+    org.opencontainers.image.documentation="https://github.com/MultiChain/multichain-explorer-2"
 
 # Upstream node image sets USER to multichain; elevate to root for package installation.
 USER root
 
-# NOTE: This still uses legacy Python 2 packages from upstream image; migration to Python 3 recommended.
+# Use Python 3 and install the v2 explorer (multichain-explorer-2) via pip3.
 # Install dependencies & explorer in one layer to reduce image size.
 RUN set -eux; \
     mkdir -p /var/lib/apt/lists/partial; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        python2 python2-dev sqlite3 libsqlite3-dev curl ca-certificates wget build-essential; \
-    ln -sf /usr/bin/python2 /usr/bin/python; \
-    wget -q https://bootstrap.pypa.io/pip/2.7/get-pip.py -O /tmp/get-pip.py; \
-    python2 /tmp/get-pip.py; \
-    # ubjson==0.16.1 no longer published for Python 2; omit (explorer does not require it). \
-    pip install --no-cache-dir pycrypto; \
-    # Install ubjson from source archive (PyPI wheel removed for Python 2) \
-    pip install --no-cache-dir https://github.com/Iotic-Labs/py-ubjson/archive/refs/tags/v0.16.1.tar.gz; \
+        python3 python3-dev python3-pip sqlite3 libsqlite3-dev curl ca-certificates wget build-essential jq; \
+    # Download the multichain-explorer-2 archive and install with pip3 so dependencies are resolved automatically
     cd /root; \
-    wget -q "https://github.com/MultiChain/multichain-explorer/archive/${MULTICHAIN_EXPLORER_REF}.tar.gz" -O explorer.tar.gz; \
+    wget -q "https://github.com/MultiChain/multichain-explorer-2/archive/${MULTICHAIN_EXPLORER_REF}.tar.gz" -O explorer.tar.gz; \
     tar -xzf explorer.tar.gz; \
     rm -f explorer.tar.gz; \
-    cd /root/multichain-explorer-*; \
-    python2 setup.py install; \
+    mv /root/multichain-explorer-2-* /opt/multichain-explorer-2; \
+    chown -R multichain:multichain /opt/multichain-explorer-2; \
+    # Note: the upstream multichain-explorer-2 source bundle does not include
+    # packaging metadata (setup.py / pyproject.toml) so it isn't pip-installable.
+    # We keep the source under /opt and load it with PYTHONPATH at runtime.
     apt-get purge -y build-essential; \
     apt-get autoremove -y; \
     apt-get clean; \
-    rm -rf /var/lib/apt/lists/* /root/.cache /tmp/get-pip.py
+    rm -rf /var/lib/apt/lists/* /root/.cache
 
 # Configuration & service script
-COPY ./explorer.conf /home/multichain/explorer.conf
 COPY ./run-services.sh /home/multichain/run-services.sh
+# Ensure explorer source is available in the image at runtime
+RUN mkdir -p /opt && chown multichain:multichain /opt || true
 # Ensure executable permission and ownership (avoid /root which is 700 and inaccessible to user)
 RUN chmod 0755 /home/multichain/run-services.sh \
-    && chown multichain:multichain /home/multichain/run-services.sh /home/multichain/explorer.conf
+    && chown multichain:multichain /home/multichain/run-services.sh
+
+# Set a sensible working directory for the runtime image. Keep owned by the unprivileged user.
+RUN mkdir -p /home/multichain && chown multichain:multichain /home/multichain || true
+WORKDIR /home/multichain
 
 # Runtime environment defaults (override at docker run / compose level)
 ENV GENERATE_EXPLORER_CONF=1 \
