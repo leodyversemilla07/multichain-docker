@@ -8,12 +8,12 @@ services:
         tty: true
         restart: unless-stopped
         healthcheck:
-            # Use HTTP JSON-RPC for the healthcheck (curl + basic auth). This avoids multichain-cli segfaults
-            # observed in the container and verifies the RPC endpoint is responsive.
-            test: ["CMD", "bash", "-c", "cd /home/multichain && curl -sS -u \"${RPC_USER}:${RPC_PASSWORD}\" -X POST -H 'content-type: text/plain;' --data-binary '{\"jsonrpc\": \"1.0\", \"id\": \"hc\", \"method\": \"getinfo\", \"params\": [] }' http://127.0.0.1:${RPC_PORT:-8000}/ | grep -q '\"result\"' || exit 1"]
-            interval: 30s
+            # Use the bundled scripts/healthcheck_rpc.sh for robustness (avoids complex inline quoting)
+            test: ["CMD", "/home/multichain/scripts/healthcheck_rpc.sh"]
+            interval: 10s
             timeout: 5s
-            retries: 3
+            retries: 5
+            start_period: 20s
         ports:
             - "7447:7447"   # Stable P2P / connect port
             - "8000:8000"   # RPC port (host access)
@@ -21,6 +21,7 @@ services:
             CHAIN_NAME: ${CHAIN_NAME}
             RPC_USER: ${RPC_USER}
             RPC_PASSWORD: ${RPC_PASSWORD}
+            RPC_PASSWORD_FILE: /run/secrets/rpc_password
             RPC_ALLOWIP: ${RPC_ALLOWIP}
             VIRTUAL_HOST: multichain-master.docker
             VIRTUAL_PORT: 8000
@@ -28,11 +29,14 @@ services:
             - master_data:/home/multichain/.multichain    # Persist chain data
             - ./scripts:/home/multichain/scripts:ro       # Helper scripts (read-only)
             - ./scripts:/scripts:ro                      # Convenience mount at /scripts
+        secrets:
+            - rpc_password
     explorer:
         image: leodyversemilla07/multichain-explorer:2.3.3
         build: ./explorer
         depends_on:
-            - masternode
+            masternode:
+                condition: service_healthy
         stdin_open: true
         tty: true
         restart: unless-stopped
@@ -50,11 +54,15 @@ services:
             RPC_PORT: ${RPC_PORT}
             RPC_USER: ${RPC_USER}
             RPC_PASSWORD: ${RPC_PASSWORD}
+            RPC_PASSWORD_FILE: /run/secrets/rpc_password
+            PUBLIC_RPCHOST: ${PUBLIC_RPCHOST}
             RPC_ALLOWIP: ${RPC_ALLOWIP}
             VIRTUAL_HOST: multichain-explorer.docker
             VIRTUAL_PORT: 2750
         volumes:
             - master_data:/home/multichain/.multichain
+        secrets:
+            - rpc_password
         deploy:
             resources:
                 limits:
@@ -120,6 +128,6 @@ volumes:
     peer1_data:
     peer2_data:
 
-# secrets:
-#   rpc_password:
-#     file: ./secrets/rpc_password.txt
+secrets:
+    rpc_password:
+        file: ./secrets/rpc_password.txt

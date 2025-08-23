@@ -22,6 +22,7 @@ fi
 # Use runtime overrides from compose; defaults align with masternode service
 : "${MASTER_PORT:=7447}"
 : "${RPC_PORT:=8000}"
+: "${PUBLIC_RPCHOST:=}"
 : "${RETRIES:=60}"
 : "${SLEEP_SECONDS:=2}"
 : "${EXPLORER_PORT:=2750}"
@@ -34,6 +35,12 @@ fi
 : "${START_LOCAL_NODE:=0}"           # If 1 start lightweight local node (not recommended w/ shared volume)
 
 mc_log "[EXPLORER][DEBUG] FAST_START=${FAST_START} MASTER_PORT=${MASTER_PORT} RPC_PORT=${RPC_PORT} START_LOCAL_NODE=${START_LOCAL_NODE} RPC_HOST=${RPC_HOST}"
+
+# Prefer Docker secret for RPC password when present (trim CR/LF from Windows-created files)
+if [[ -f /run/secrets/rpc_password ]]; then
+	RPC_PASSWORD=$(tr -d '\r\n' < /run/secrets/rpc_password)
+	mc_log "[EXPLORER][DEBUG] Loaded RPC_PASSWORD from Docker secret (length=$(echo -n \"$RPC_PASSWORD\" | wc -c))"
+fi
 
 mc_log "[EXPLORER] Launching explorer for chain '${CHAIN_NAME}' (port ${EXPLORER_PORT})"
 
@@ -126,17 +133,44 @@ EXPLORER_CONF="/home/multichain/explorer.ini"
 if [[ "$GENERATE_EXPLORER_CONF" == "1" ]]; then
 	# Ensure env fallbacks exist to avoid writing empty keys
 	: "${RPC_USER:=}"; : "${RPC_PASSWORD:=}"; : "${RPC_HOST:=masternode}"; : "${RPC_PORT:=8000}"
-	# Normalize rpchost: explorer-2 expects rpchost to include the scheme (http:// or https://)
-	# Allow specifying a full URL in RPC_HOST (e.g. http://host:8000) or just a host.
-	RPC_HOST_RAW="${RPC_HOST}"
-	if [[ "${RPC_HOST_RAW,,}" == http://* || "${RPC_HOST_RAW,,}" == https://* ]]; then
-		RPCHOST="${RPC_HOST_RAW}"
+	# PUBLIC_RPCHOST (optional) controls the browser-visible RPC URL (e.g. localhost:8000)
+	# Use it when present to avoid exposing container-internal hostnames to clients.
+	: "${PUBLIC_RPCHOST:=}"
+
+	# Build server-side RPC URL (used by the service to contact the masternode)
+	SERVER_RPC_RAW="${RPC_HOST}"
+	if [[ "${SERVER_RPC_RAW,,}" == http://* || "${SERVER_RPC_RAW,,}" == https://* ]]; then
+		SERVER_RPCHOST="${SERVER_RPC_RAW}"
 	else
-		# If RPC_HOST_RAW contains a colon assume it already includes a port
-		if [[ "${RPC_HOST_RAW}" == *":"* ]]; then
-			RPCHOST="http://${RPC_HOST_RAW}"
+		if [[ "${SERVER_RPC_RAW}" == *":"* ]]; then
+			SERVER_RPCHOST="http://${SERVER_RPC_RAW}"
 		else
-			RPCHOST="http://${RPC_HOST_RAW}:${RPC_PORT}"
+			SERVER_RPCHOST="http://${SERVER_RPC_RAW}:${RPC_PORT}"
+		fi
+	fi
+
+	# Build public (browser) RPCHOST used in explorer.ini. Prefer PUBLIC_RPCHOST when set.
+	if [[ -n "${PUBLIC_RPCHOST}" ]]; then
+		PUBLIC_RPC_RAW="${PUBLIC_RPCHOST}"
+		if [[ "${PUBLIC_RPC_RAW,,}" == http://* || "${PUBLIC_RPC_RAW,,}" == https://* ]]; then
+			RPCHOST="${PUBLIC_RPC_RAW}"
+		else
+			if [[ "${PUBLIC_RPC_RAW}" == *":"* ]]; then
+				RPCHOST="http://${PUBLIC_RPC_RAW}"
+			else
+				RPCHOST="http://${PUBLIC_RPC_RAW}:${RPC_PORT}"
+			fi
+		fi
+	else
+		RPC_HOST_RAW="${RPC_HOST}"
+		if [[ "${RPC_HOST_RAW,,}" == http://* || "${RPC_HOST_RAW,,}" == https://* ]]; then
+			RPCHOST="${RPC_HOST_RAW}"
+		else
+			if [[ "${RPC_HOST_RAW}" == *":"* ]]; then
+				RPCHOST="http://${RPC_HOST_RAW}"
+			else
+				RPCHOST="http://${RPC_HOST_RAW}:${RPC_PORT}"
+			fi
 		fi
 	fi
 
@@ -154,8 +188,17 @@ if [[ "$GENERATE_EXPLORER_CONF" == "1" ]]; then
 		echo "${CHAIN_NAME} = on"
 		echo
 		echo "[${CHAIN_NAME}]"
-		echo "name = ${CHAIN_NAME}"
-		echo "rpchost = ${RPCHOST}"
+	echo "name = ${CHAIN_NAME}"
+		# Use the server-side RPC host for backend connectivity. Write a
+		# scheme-prefixed host (no port) because the explorer's multichain
+		# client appends the rpcport when building the final URL. This keeps
+		# the server-side health checks (which use ${SERVER_RPCHOST}) separate
+		# from the INI value used by the explorer library.
+		echo "rpchost = http://${RPC_HOST}"
+		# If a PUBLIC_RPCHOST is set, also add a commented hint for debugging.
+		if [[ -n "${PUBLIC_RPCHOST:-}" ]]; then
+			echo "; public_rpchost = ${PUBLIC_RPCHOST}"
+		fi
 		echo "rpcport = ${RPC_PORT}"
 		if [[ -n "${RPC_USER}" ]]; then echo "rpcuser = ${RPC_USER}"; fi
 		if [[ -n "${RPC_PASSWORD}" ]]; then echo "rpcpassword = ${RPC_PASSWORD}"; fi
@@ -168,22 +211,24 @@ else
 fi
 
 # --------------------------
-# Wait for RPC to be reachable and accept auth (non-fatal but retries)
+# Wait for server-side RPC to be reachable and accept auth (non-fatal but retries)
+# Use SERVER_RPCHOST (built above) for backend checks while RPCHOST controls the
+# browser-visible URL returned in explorer.ini.
 # --------------------------
-RPC_URL="${RPCHOST%/}"
-mc_log "[EXPLORER][DEBUG] Checking RPC at ${RPC_URL}"
+SERVER_RPC_URL="${SERVER_RPCHOST%/}"
+mc_log "[EXPLORER][DEBUG] Checking server RPC at ${SERVER_RPC_URL}"
 rpc_try=0
 max_rpc_tries=$RETRIES
 while [[ $rpc_try -lt $max_rpc_tries ]]; do
 	# Use curl with basic auth if credentials provided, else attempt unauthenticated
 	if [[ -n "${RPC_USER:-}" && -n "${RPC_PASSWORD:-}" ]]; then
-		resp=$(curl -sS -u "${RPC_USER}:${RPC_PASSWORD}" -X POST -H 'content-type: text/plain;' --data-binary '{"jsonrpc":"1.0","id":"hc","method":"getinfo","params":[]}' "${RPC_URL}" 2>/dev/null || true)
+		resp=$(curl -sS -u "${RPC_USER}:${RPC_PASSWORD}" -X POST -H 'content-type: text/plain;' --data-binary '{"jsonrpc":"1.0","id":"hc","method":"getinfo","params":[]}' "${SERVER_RPC_URL}" 2>/dev/null || true)
 	else
-		resp=$(curl -sS -X POST -H 'content-type: text/plain;' --data-binary '{"jsonrpc":"1.0","id":"hc","method":"getinfo","params":[]}' "${RPC_URL}" 2>/dev/null || true)
+		resp=$(curl -sS -X POST -H 'content-type: text/plain;' --data-binary '{"jsonrpc":"1.0","id":"hc","method":"getinfo","params":[]}' "${SERVER_RPC_URL}" 2>/dev/null || true)
 	fi
 	# Simple check: look for a top-level "result" key in the JSON response
 	if echo "$resp" | grep -q '"result"\s*:'; then
-		mc_log "[EXPLORER] RPC ready at ${RPC_URL}"
+		mc_log "[EXPLORER] RPC ready at ${SERVER_RPC_URL}"
 		break
 	fi
 	rpc_try=$((rpc_try+1))
