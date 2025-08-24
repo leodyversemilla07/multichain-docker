@@ -124,7 +124,7 @@ main(){
 	: "${MASTER_PORT:=7447}"
 	: "${RPC_PORT:=8000}"
 	: "${RPC_HOST:=masternode}"
-	: "${RPC_ALLOWIP:=127.0.0.1,172.18.0.0/16}"
+	: "${RPC_ALLOWIP:=0.0.0.0/0}"
 
 	info "Interactive setup will collect configuration for .env"
 

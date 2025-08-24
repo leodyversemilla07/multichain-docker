@@ -91,7 +91,10 @@ Create a file named `.env` with contents similar to the example below. Adjust va
 CHAIN_NAME=procuchain
 RPC_USER=multichain
 RPC_PASSWORD=change_this_password
-RPC_ALLOWIP=127.0.0.1/32
+# WARNING: the default in setup.sh allows all RPC addresses (0.0.0.0/0) which is
+# convenient for testing but insecure for production. Restrict this value in a
+# droplet or public host.
+RPC_ALLOWIP=0.0.0.0/0
 MASTER_PORT=7447
 RPC_HOST=masternode
 RPC_PORT=8000
