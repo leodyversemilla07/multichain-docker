@@ -140,8 +140,12 @@ EXPLORER_CONF="/home/multichain/explorer.ini"
 if [[ "$GENERATE_EXPLORER_CONF" == "1" ]]; then
 	# Ensure env fallbacks exist to avoid writing empty keys
 	: "${RPC_USER:=}"; : "${RPC_PASSWORD:=}"; : "${RPC_HOST:=masternode}"; : "${RPC_PORT:=8000}"
-	# Build server-side RPC URL (used by the service to contact the masternode)
-	SERVER_RPC_RAW="${RPC_HOST}"
+	# Build server-side RPC URL (used by the service to contact the masternode).
+	# For container-to-container RPC calls prefer the compose service name
+	# (MASTER_HOST) which resolves inside the Docker network. The environment
+	# variable RPC_HOST is preserved for the browser-visible `rpchost` so a
+	# user can keep `RPC_HOST=localhost` to access RPC from their host machine.
+	SERVER_RPC_RAW="${MASTER_HOST:-${RPC_HOST}}"
 	if [[ "${SERVER_RPC_RAW,,}" == http://* || "${SERVER_RPC_RAW,,}" == https://* ]]; then
 		SERVER_RPCHOST="${SERVER_RPC_RAW}"
 	else
@@ -157,11 +161,12 @@ if [[ "$GENERATE_EXPLORER_CONF" == "1" ]]; then
 	if [[ "${RPC_HOST_RAW,,}" == http://* || "${RPC_HOST_RAW,,}" == https://* ]]; then
 		RPCHOST="${RPC_HOST_RAW}"
 	else
-		if [[ "${RPC_HOST_RAW}" == *":"* ]]; then
-			RPCHOST="http://${RPC_HOST_RAW}"
-		else
-			RPCHOST="http://${RPC_HOST_RAW}:${RPC_PORT}"
-		fi
+		# Write a browser-visible host without the port. The explorer's
+		# multichain client expects `rpchost` to contain the scheme+host and
+		# the `rpcport` to be specified separately in the INI. If we include
+		# the port here the client will append the port again (resulting in
+		# something like http://host:8000:8000), causing connection failures.
+		RPCHOST="http://${RPC_HOST_RAW}"
 	fi
 
 	# Build INI but omit empty rpcuser/rpcpassword lines to avoid invalid keys
@@ -180,12 +185,20 @@ if [[ "$GENERATE_EXPLORER_CONF" == "1" ]]; then
 		echo
 		echo "[${CHAIN_NAME}]"
 		echo "name = ${CHAIN_NAME}"
-		# Use the server-side RPC host for backend connectivity. Write a
-		# scheme-prefixed host (no port) because the explorer's multichain
-		# client appends the rpcport when building the final URL. This keeps
-		# the server-side health checks (which use ${SERVER_RPCHOST}) separate
-		# from the INI value used by the explorer library.
-		echo "rpchost = http://${RPC_HOST}"
+	# Use the computed public RPCHOST for browser-visible RPC connectivity.
+	# RPCHOST already includes a scheme and (optionally) a port, so write it
+	# directly into the INI. This ensures the explorer UI (running in the
+	# browser) can reach the RPC using the same host/port published by
+	# docker-compose (for example: http://localhost:8000).
+	# Use the container-visible master host for server-side RPC calls so the
+	# explorer (running inside the container) connects to the masternode over
+	# the compose network. Write only scheme+host here; the rpcport is written
+	# separately below and the multichain client will combine them.
+	if [[ -n "${MASTER_HOST:-}" ]]; then
+		echo "rpchost = http://${MASTER_HOST}"
+	else
+		echo "rpchost = ${RPCHOST}"
+	fi
 	# explorer.ini will reflect RPC_HOST/RPC_PORT
 		echo "rpcport = ${RPC_PORT}"
 		if [[ -n "${RPC_USER}" ]]; then echo "rpcuser = ${RPC_USER}"; fi
