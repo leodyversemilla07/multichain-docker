@@ -21,8 +21,9 @@ services:
             RPC_USER: ${RPC_USER}
             RPC_PASSWORD: ${RPC_PASSWORD}
             RPC_ALLOWIP: ${RPC_ALLOWIP}
-            # Force explorersupport for API access (2) and perform a one-time rescan
-            START_FLAGS: "-printtoconsole -shrinkdebugfilesize -port=${MASTER_PORT} -rpcport=${RPC_PORT} -rpcbind=${RPC_HOST:-0.0.0.0} -explorersupport=2 -rescan"
+            # Force explorersupport for API access and perform a one-time rescan
+            # Use RPC_BIND (from .env) to control which interface RPC binds to.
+            START_FLAGS: "-printtoconsole -shrinkdebugfilesize -port=${MASTER_PORT} -rpcport=${RPC_PORT} -rpcbind=${RPC_BIND:-0.0.0.0} -explorersupport=1 -rescan"
             VIRTUAL_HOST: multichain-master.docker
             VIRTUAL_PORT: 8000
         volumes:

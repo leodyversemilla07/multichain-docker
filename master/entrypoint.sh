@@ -114,20 +114,30 @@ mc_log "[MASTER] START_FLAGS=${START_FLAGS} (rpcbind=${RPC_BIND})"
 # (first-time enable), include -rescan once and create a marker file so we do
 # not rescan on every restart (rescans can be expensive).
 EXPL_MARKER="${CHAIN_DIR}/.explorer_enabled"
+# Ensure explorer support is enabled. Always append the explorersupport flag so
+# the daemon exposes Explorer APIs. If the one-time marker is missing, also
+# schedule a one-time -rescan and create the marker atomically to avoid
+# repeated rescans on subsequent restarts.
 if [[ "${START_FLAGS}" != *"-explorersupport"* ]]; then
-  if [[ ! -f "${EXPL_MARKER}" ]]; then
-    mc_log "[MASTER] Enabling explorer support and scheduling initial rescan (this may take a while)"
-    # Append explorersupport and a one-time rescan flag. Use value 2 which
-    # is accepted by multichaind for explorer APIs.
-    export START_FLAGS="${START_FLAGS} -explorersupport=2 -rescan"
-    # Create marker to avoid repeating rescan on subsequent restarts
-    touch "${EXPL_MARKER}" || mc_log "[MASTER][WARN] Could not create ${EXPL_MARKER}"
+  mc_log "[MASTER] Appending -explorersupport=2 to START_FLAGS"
+  export START_FLAGS="${START_FLAGS} -explorersupport=2"
+else
+  mc_log "[MASTER] START_FLAGS already contains explorersupport"
+fi
+
+if [[ ! -f "${EXPL_MARKER}" ]]; then
+  mc_log "[MASTER] Explorer marker not found; scheduling initial rescan (this may take a while)"
+  export START_FLAGS="${START_FLAGS} -rescan"
+  # Create marker atomically. Ensure chain dir exists then write marker file.
+  if mkdir -p "${CHAIN_DIR}" 2>/dev/null; then
+    if ! : > "${EXPL_MARKER}" 2>/dev/null; then
+      mc_log "[MASTER][WARN] Could not create ${EXPL_MARKER}; rescan may run again on restart"
+    fi
   else
-    mc_log "[MASTER] Enabling explorer support (rescan already done)"
-    export START_FLAGS="${START_FLAGS} -explorersupport=2"
+    mc_log "[MASTER][WARN] Could not ensure chain dir ${CHAIN_DIR}; marker not created"
   fi
 else
-  mc_log "[MASTER] START_FLAGS already includes explorer support"
+  mc_log "[MASTER] Explorer marker present; skipping initial rescan"
 fi
 
 # Export expected hash if available for base entrypoint self-check

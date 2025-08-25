@@ -141,23 +141,32 @@ if [[ "$GENERATE_EXPLORER_CONF" == "1" ]]; then
 	# Ensure env fallbacks exist to avoid writing empty keys
 	: "${RPC_USER:=}"; : "${RPC_PASSWORD:=}"; : "${RPC_HOST:=masternode}"; : "${RPC_PORT:=8000}"
 	# Build server-side RPC URL (used by the service to contact the masternode).
-	# For container-to-container RPC calls prefer the compose service name
-	# (MASTER_HOST) which resolves inside the Docker network. The environment
-	# variable RPC_HOST is preserved for the browser-visible `rpchost` so a
-	# user can keep `RPC_HOST=localhost` to access RPC from their host machine.
-	SERVER_RPC_RAW="${MASTER_HOST:-${RPC_HOST}}"
-	if [[ "${SERVER_RPC_RAW,,}" == http://* || "${SERVER_RPC_RAW,,}" == https://* ]]; then
-		SERVER_RPCHOST="${SERVER_RPC_RAW}"
+	# Prefer the resolved master IP discovered earlier (variable 'ip') so the
+	# explorer checks the actual container IP:port instead of relying on a
+	# potentially host-local `localhost` value. Fall back to MASTER_HOST logic
+	# if the resolved IP isn't available.
+	if [[ -n "${ip:-}" ]]; then
+		SERVER_RPCHOST="http://${ip}:${RPC_PORT}"
 	else
-		if [[ "${SERVER_RPC_RAW}" == *":"* ]]; then
-			SERVER_RPCHOST="http://${SERVER_RPC_RAW}"
+		SERVER_RPC_RAW="${MASTER_HOST}"
+		if [[ "${SERVER_RPC_RAW,,}" == http://* || "${SERVER_RPC_RAW,,}" == https://* ]]; then
+			SERVER_RPCHOST="${SERVER_RPC_RAW}"
 		else
-			SERVER_RPCHOST="http://${SERVER_RPC_RAW}:${RPC_PORT}"
+			if [[ "${SERVER_RPC_RAW}" == *":"* ]]; then
+				SERVER_RPCHOST="http://${SERVER_RPC_RAW}"
+			else
+				SERVER_RPCHOST="http://${SERVER_RPC_RAW}:${RPC_PORT}"
+			fi
 		fi
 	fi
 
-	# Build public (browser) RPCHOST used in explorer.ini from RPC_HOST/RPC_PORT
-	RPC_HOST_RAW="${RPC_HOST}"
+	# Build public RPCHOST used in explorer.ini.
+	# Use MASTER_HOST for the server-visible rpchost so the explorer process
+	# inside this container connects to the masternode over the compose
+	# network. The browser-visible host remains RPC_HOST in case the user
+	# set it to 'localhost' for host-side access; but the server needs the
+	# container-resolvable address.
+	RPC_HOST_RAW="${MASTER_HOST}"
 	if [[ "${RPC_HOST_RAW,,}" == http://* || "${RPC_HOST_RAW,,}" == https://* ]]; then
 		RPCHOST="${RPC_HOST_RAW}"
 	else
@@ -194,11 +203,11 @@ if [[ "$GENERATE_EXPLORER_CONF" == "1" ]]; then
 	# explorer (running inside the container) connects to the masternode over
 	# the compose network. Write only scheme+host here; the rpcport is written
 	# separately below and the multichain client will combine them.
-	if [[ -n "${MASTER_HOST:-}" ]]; then
-		echo "rpchost = http://${MASTER_HOST}"
-	else
-		echo "rpchost = ${RPCHOST}"
-	fi
+	# Write the public RPCHOST for browser-visible RPC connectivity.
+	# Use the previously computed RPCHOST which intentionally omits an explicit
+	# port so the explorer client can combine RPCHOST + rpcport without
+	# duplicating the port (avoid http://host:8000:8000).
+	echo "rpchost = ${RPCHOST}"
 	# explorer.ini will reflect RPC_HOST/RPC_PORT
 		echo "rpcport = ${RPC_PORT}"
 		if [[ -n "${RPC_USER}" ]]; then echo "rpcuser = ${RPC_USER}"; fi

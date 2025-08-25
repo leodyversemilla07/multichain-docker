@@ -27,8 +27,10 @@ RPC_USER=${RPC_USER}
 RPC_PASSWORD=${RPC_PASSWORD}
 MASTER_PORT=${MASTER_PORT}
 RPC_PORT=${RPC_PORT}
+MASTER_HOST=${MASTER_HOST}
 RPC_HOST=${RPC_HOST}
 RPC_ALLOWIP=${RPC_ALLOWIP}
+EXPLORER_PORT=${EXPLORER_PORT}
 EOF
 	mv "$ENV_FILE.tmp" "$ENV_FILE"
 	chmod 600 "$ENV_FILE" || true
@@ -86,12 +88,15 @@ prompt_password() {
 
 usage(){
 	cat <<'USAGE' >&2
-Usage: setup.sh [--yes|-y] [--no-start] [--help]
+Usage: setup.sh [--yes|-y] [--no-start] [--reset] [--services core|all] [--help]
 
 Options:
-	-y, --yes       Non-interactive: accept defaults and overwrite existing .env if present
-			--no-start  Do not start docker compose services after writing .env
-	-h, --help      Show this help
+	-y, --yes          Non-interactive: accept defaults and overwrite existing .env if present
+	--no-start         Do not start docker compose services after writing .env
+	--reset            Remove compose containers, named volumes and images for this project before starting (destructive)
+	--services <type>  Which services to start: 'core' (masternode + explorer) or 'all' (masternode, explorer, peers). Default: all
+	--env <local|prod> Choose environment defaults: 'local' (browser-accessible RPC) or 'prod' (secure defaults). Default: local
+	-h, --help         Show this help
 USAGE
 }
 
@@ -99,10 +104,16 @@ main(){
 	# parse args
 	BATCH=0
 	NO_START=0
+	RESET=0
+	SERVICES=all
+	ENV_TYPE=local
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 			-y|--yes) BATCH=1; shift ;;
+			--env) ENV_TYPE="$2"; shift 2 ;;
 			--no-start) NO_START=1; shift ;;
+			--reset) RESET=1; shift ;;
+			--services) SERVICES="$2"; shift 2 ;;
 			-h|--help) usage; exit 0 ;;
 			*) echo "Unknown arg: $1" >&2; usage; exit 2 ;;
 		esac
@@ -123,8 +134,27 @@ main(){
 	: "${RPC_PASSWORD:=}"
 	: "${MASTER_PORT:=7447}"
 	: "${RPC_PORT:=8000}"
-	: "${RPC_HOST:=masternode}"
-	: "${RPC_ALLOWIP:=0.0.0.0/0}"
+	: "${MASTER_HOST:=masternode}"
+	: "${RPC_BIND:=0.0.0.0}"
+	: "${EXPLORER_PORT:=2750}"
+
+	# set RPC defaults based on environment type if not already set
+	# RPC_HOST is the hostname explorer/containers use to reach the masternode.
+	# RPC_BIND is the interface the masternode will bind RPC to (0.0.0.0 for host access).
+	if [[ -z "${RPC_HOST:-}" ]]; then
+		if [[ "${ENV_TYPE,,}" == "prod" ]]; then
+			RPC_HOST=masternode
+			RPC_ALLOWIP=127.0.0.1/32
+			RPC_BIND=127.0.0.1
+		else
+			# For local development we want explorer (in a container) to connect to the
+			# masternode container by its service name, but still expose RPC on 0.0.0.0
+			# so the host browser can access it via localhost:RPC_PORT.
+			RPC_HOST=masternode
+			RPC_ALLOWIP=0.0.0.0/0
+			RPC_BIND=0.0.0.0
+		fi
+	fi
 
 	info "Interactive setup will collect configuration for .env"
 
@@ -155,8 +185,10 @@ main(){
 
 	prompt MASTER_PORT "Masternode port (P2P)" "$MASTER_PORT"
 	prompt RPC_PORT "RPC port" "$RPC_PORT"
-	prompt RPC_HOST "RPC host (used by explorer)" "$RPC_HOST"
+	prompt RPC_HOST "RPC host (used by explorer/browser)" "$RPC_HOST"
 	prompt RPC_ALLOWIP "RPC allow IPs (comma separated)" "$RPC_ALLOWIP"
+	prompt MASTER_HOST "Masternode service hostname (used by containers)" "$MASTER_HOST"
+	prompt EXPLORER_PORT "Explorer UI port" "$EXPLORER_PORT"
 
 		# write .env
 		write_env
@@ -166,8 +198,56 @@ main(){
 			exit 0
 		fi
 
-		info "Starting core services (masternode + explorer). Logs will follow in the compose output." 
-		"${COMPOSE[@]}" up -d masternode explorer
+		# Destructive reset flow (remove containers/volumes/images used by this compose project)
+		if [[ "$RESET" -eq 1 ]]; then
+			if [[ "$BATCH" -eq 0 ]]; then
+				read -r -p "--reset will remove containers, named volumes and images for this project. Continue? [y/N]: " yn
+		RPC_BIND=${RPC_BIND}
+				yn=${yn:-N}
+				if [[ ! "$yn" =~ ^[Yy]$ ]]; then
+					info "Reset aborted by user. Continuing without reset."
+				else
+					info "Performing reset: stopping and removing compose resources (containers, named volumes, images)"
+					"${COMPOSE[@]}" down --rmi all --volumes --remove-orphans
+					# prune build cache to ensure rebuild
+					docker builder prune -f || true
+				fi
+			else
+				info "--reset supplied and --yes: performing non-interactive reset"
+				"${COMPOSE[@]}" down --rmi all --volumes --remove-orphans
+				docker builder prune -f || true
+			fi
+		fi
+
+		# Decide which services to start
+		case "${SERVICES,,}" in
+			core)
+				START_CMD=("${COMPOSE[@]}" up -d masternode explorer)
+				info "Starting core services (masternode + explorer)"
+				;;
+			all)
+				START_CMD=("${COMPOSE[@]}" up -d)
+				info "Starting all services defined in $COMPOSE_FILE (masternode, explorer, peer1, peer2)"
+				;;
+			*)
+				err "Unknown services type: ${SERVICES}. Use 'core' or 'all'."; exit 2
+				;;
+		esac
+
+		# Start services (rebuild if images missing)
+		"${START_CMD[@]}"
+
+		info "Startup requested. Waiting a few seconds for services to initialize..."
+		sleep 3
+
+		# Post-start verification: show basic status and recent logs for core services
+		"${COMPOSE[@]}" ps
+		echo
+		echo "--- masternode recent logs ---"
+		"${COMPOSE[@]}" logs --no-color --tail=50 masternode || true
+		echo
+		echo "--- explorer recent logs ---"
+		"${COMPOSE[@]}" logs --no-color --tail=50 explorer || true
 
 		info "Startup complete. Explorer should be available on port ${EXPLORER_PORT:-2750} (if exposed)."
 		info "Do not share the RPC password; it is stored in $ENV_FILE with mode 600."
